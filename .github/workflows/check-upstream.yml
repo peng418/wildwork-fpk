@@ -1,0 +1,154 @@
+name: Check Upstream & Auto-Build (custom)
+
+# 每 6 小时检查 rockswang/wild-work 的最新 release。
+# 发现新版本且本仓库还没有对应 Release 时，自动 dispatch build-fpk.yml 打包定制版。
+# 定制版会优先从 peng418/wild-work 找同名 tag（可能含你手动的定制补丁），
+# 找不到则回退到 rockswang/wild-work 官方版。
+
+on:
+  schedule:
+    - cron: '0 */6 * * *'   # 每 6 小时，比 mickeyttsc 的 2h 省 Action 额度
+  workflow_dispatch: {}      # 手动立即检查
+
+permissions:
+  contents: write
+  actions: write
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Get upstream latest release
+        id: upstream
+        run: |
+          resp=$(curl -sf -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
+            https://api.github.com/repos/rockswang/wild-work/releases/latest)
+          tag=$(echo "$resp" | jq -r '.tag_name')
+          url=$(echo "$resp" | jq -r '.html_url')
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "url=$url" >> "$GITHUB_OUTPUT"
+          echo "Upstream latest: $tag ($url)"
+
+      - name: Check if we already built this version
+        id: check
+        run: |
+          tag="${{ steps.upstream.outputs.tag }}"
+          code=$(curl -s -o /dev/null -w "%{http_code}" \
+            "https://api.github.com/repos/${GITHUB_REPOSITORY}/releases/tags/${tag}" \
+            -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}")
+          echo "Existing release lookup HTTP: $code"
+          if [ "$code" = "200" ]; then
+            echo "build=false" >> "$GITHUB_OUTPUT"
+            echo "v${tag} already built, nothing to do."
+          else
+            echo "build=true" >> "$GITHUB_OUTPUT"
+            echo "New upstream version detected: ${tag}"
+          fi
+
+      - name: Trigger build workflow
+        if: steps.check.outputs.build == 'true'
+        run: |
+          tag="${{ steps.upstream.outputs.tag }}"
+          code=$(curl -s -o /dev/null -w "%{http_code}" -X POST \
+            "https://api.github.com/repos/${GITHUB_REPOSITORY}/actions/workflows/build-fpk.yml/dispatches" \
+            -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
+            -H "Accept: application/vnd.github+json" \
+            -H "Content-Type: application/json" \
+            -d "{\"ref\":\"main\",\"inputs\":{\"version\":\"${tag}\",\"upstream_ref\":\"${tag}\"}}")
+          if [ "$code" != "204" ]; then
+            echo "::error::Build dispatch failed (HTTP $code)"
+            exit 1
+          fi
+          echo "Build dispatched for ${tag}"
+
+      - name: Wait for build result and create Release
+        if: steps.check.outputs.build == 'true'
+        run: |
+          set -euo pipefail
+          tag="${{ steps.upstream.outputs.tag }}"
+          echo "Waiting for build of ${tag} to finish..."
+
+          # 轮询最新一次 run（由上面的 dispatch 触发），最长 10 分钟
+          conclusion=""
+          run_id=""
+          for i in $(seq 1 20); do
+            sleep 30
+            run=$(curl -sf \
+              "https://api.github.com/repos/${GITHUB_REPOSITORY}/actions/runs?event=workflow_dispatch&per_page=1" \
+              -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}")
+            status=$(echo "$run" | jq -r '.workflow_runs[0].status')
+            conclusion=$(echo "$run" | jq -r '.workflow_runs[0].conclusion // "null"')
+            run_id=$(echo "$run" | jq -r '.workflow_runs[0].id // "null"')
+            echo "[$i] run $run_id: $status / ${conclusion}"
+            [ "$status" = "completed" ] && break
+          done
+
+          if [ "$conclusion" != "success" ]; then
+            echo "::error::Build failed for ${tag} (run $run_id, conclusion=$conclusion)"
+            exit 1
+          fi
+
+          # 从 build run 下载 artifact
+          art=$(curl -sf \
+            "https://api.github.com/repos/${GITHUB_REPOSITORY}/actions/runs/${run_id}/artifacts" \
+            -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}")
+          art_id=$(echo "$art" | jq -r '.artifacts[0].id // "null"')
+          if [ -z "$art_id" ] || [ "$art_id" = "null" ]; then
+            echo "::error::No artifact found on run $run_id"
+            echo "$art" | jq .
+            exit 1
+          fi
+          echo "Downloading artifact $art_id"
+          curl -sfL -o artifact.zip \
+            "https://api.github.com/repos/${GITHUB_REPOSITORY}/actions/artifacts/${art_id}/zip" \
+            -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}"
+          unzip -o artifact.zip
+          ls -la *.fpk
+
+          fpk_file=$(ls wildwork-*.fpk | head -1)
+          if [ -z "$fpk_file" ]; then
+            echo "::error::artifact zip contained no wildwork-*.fpk"
+            exit 1
+          fi
+          SHA=$(sha256sum "$fpk_file" | cut -d' ' -f1)
+          echo "FPK: $fpk_file  sha256=$SHA"
+
+          # 创建 Release
+          body=$(printf '{"tag_name":"%s","name":"Wild Work FPK %s (custom)","body":"自动构建于上游 %s (rockswang/wild-work)。\\n定制版可能包含额外的功能补丁（v2 key、保活时间设置、手机端适配等），请参见 peng418/wild-work 仓库。","draft":false,"prerelease":false}' "$tag" "$tag" "$tag")
+          resp=$(curl -s -w '\n%{http_code}' -X POST \
+            "https://api.github.com/repos/${GITHUB_REPOSITORY}/releases" \
+            -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
+            -H "Accept: application/vnd.github+json" \
+            -d "$body")
+          code=$(echo "$resp" | tail -1)
+          echo "create release HTTP $code"
+          if [ "$code" != "201" ] && [ "$code" != "200" ]; then
+            echo "$resp" | head -n -1
+            echo "::error::create release failed (HTTP $code)"
+            exit 1
+          fi
+          rel_id=$(echo "$resp" | head -n -1 | jq -r '.id')
+
+          # 上传附件（重试 5 次）
+          uploaded=""
+          for attempt in 1 2 3 4 5; do
+            resp=$(curl -sS -w '\n%{http_code}' -X POST \
+              "https://uploads.github.com/repos/${GITHUB_REPOSITORY}/releases/${rel_id}/assets?name=${fpk_file}" \
+              -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
+              -H "Content-Type: application/octet-stream" \
+              --data-binary "@${fpk_file}") || true
+            code=$(echo "$resp" | tail -1)
+            echo "upload attempt $attempt -> HTTP $code"
+            if [ "$code" = "201" ]; then
+              uploaded=$(echo "$resp" | head -n -1 | jq -r '.browser_download_url')
+              break
+            fi
+            sleep $((attempt * 10))
+          done
+
+          if [ -z "$uploaded" ] || [ "$uploaded" = "null" ]; then
+            echo "::error::asset upload failed after 5 attempts for ${tag}"
+            exit 1
+          fi
+          echo "Uploaded: $uploaded"
+          echo "Release ready: https://github.com/${GITHUB_REPOSITORY}/releases/tag/${tag}"
