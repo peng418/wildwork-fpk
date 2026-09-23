@@ -1,0 +1,19 @@
+[
+  {
+    "stepTitle": "Wild Work 运行参数",
+    "items": [
+      {
+        "type": "tips",
+        "helpText": "本应用无安装期参数需要填写：端口固定 5013（manifest service_port），监听 0.0.0.0（IPv4+IPv6 双栈）。"
+      },
+      {
+        "type": "tips",
+        "helpText": "如需修改端口/监听地址，可在应用数据目录的 config.json 与 bin/config.json 中调整后重启应用。"
+      },
+      {
+        "type": "tips",
+        "helpText": "打开方式：飞牛桌面窗口内弹窗（统一网关 /app/wildwork），不跳转页面。"
+      }
+    ]
+  }
+]

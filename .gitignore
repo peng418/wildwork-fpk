@@ -1,0 +1,4 @@
+dist/*.fpk
+dist/*.png
+.build/
+payload/wild-work*
