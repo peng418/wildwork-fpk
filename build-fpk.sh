@@ -12,7 +12,7 @@
 # ============================================================================
 set -euo pipefail
 
-VERSION="${1:-2.4.4}"
+VERSION="${1:-2.4.5}"
 OUT_DIR="${2:-dist}"
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 TPL="$HERE/tpl"
@@ -91,7 +91,7 @@ M="$PKG/manifest"
   printf 'service_port          = %s\n'   "$PORT"
   printf 'desktop_uidir         = ui\n'
   printf 'desktop_applaunchname = %s.main\n' "$APPNAME"
-  printf 'changelog             = r21 定制 + 直连入口 + CI 自动打包：v2独立key、保活时间可设置、手机端适配、统一UI、bug修复\n'
+  printf 'changelog = r25: 单入口 + 检查更新 + 登录优先体验 | FPK 2.4.5\n'
 } >> "$M"
 sed -n '1,20p' "$M" | sed 's/^/  /'
 
