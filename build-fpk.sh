@@ -6,14 +6,14 @@
 #   1. 页内弹窗不跳转：ui/config 全用 type=iframe + 统一网关 /app/wildwork
 #      （unix socket 由 wwbridge 桥到 127.0.0.1:5013），无任何 url/新标签入口
 #   2. IPv4+IPv6 双栈：监听 0.0.0.0:5013（实测 ss=*:5013，v4/v6 回环+局域网四路 200）
-#   3. 产物落到 OUT_DIR（默认 dist）
+#   3. 产物落在 dist/；第 2 个参数给了目录才额外复制一份过去
 #
-# 用法: ./build-fpk.sh [版本号] [输出目录]
+# 用法: ./build-fpk.sh [版本号] [额外输出目录]
 # ============================================================================
 set -euo pipefail
 
-VERSION="${1:-2.4.5}"
-OUT_DIR="${2:-dist}"
+VERSION="${1:-2.4.7}"
+OUT_DIR="${2:-}"
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 TPL="$HERE/tpl"
 PAYLOAD="$HERE/payload/wild-work"
@@ -91,7 +91,7 @@ M="$PKG/manifest"
   printf 'service_port          = %s\n'   "$PORT"
   printf 'desktop_uidir         = ui\n'
   printf 'desktop_applaunchname = %s.main\n' "$APPNAME"
-  printf 'changelog = r25: 单入口 + 检查更新 + 登录优先体验 | FPK 2.4.5\n'
+  printf 'changelog = r26: 全新深色 UI（Dark Glassmorphism）+ 移动端布局修复 + 登录回调页深色化（保留单入口/检查更新/登录优先欢迎页）| FPK %s\n' "$VERSION"
 } >> "$M"
 sed -n '1,20p' "$M" | sed 's/^/  /'
 
@@ -126,11 +126,12 @@ echo "  --- app.tgz 内 cmd/ 权限:"
 tar xzf "$FPK" -O app.tgz | tar tzv 2>/dev/null | grep 'cmd/' | awk '{print "    "$1, $NF}' || true
 echo "  --- app.tgz 内 symlink 数: $(tar xzf "$FPK" -O app.tgz | tar t 2>/dev/null | wc -l) 个条目（symlink 已在上一步保证 0）"
 
-say "7. 落到 $OUT_DIR"
-if [ -d "$OUT_DIR" ] && [ -w "$OUT_DIR" ]; then
+say "7. 落到额外输出目录（可选）"
+if [ -n "$OUT_DIR" ] && [ -d "$OUT_DIR" ] && [ -w "$OUT_DIR" ]; then
   cp -f "$FPK" "$OUT_DIR/" && echo "  已复制: $OUT_DIR/$(basename "$FPK")"
+elif [ -n "$OUT_DIR" ]; then
+  echo "  目标目录不可用/不可写（属主与权限需自查）—— 跳过复制"
 else
-  echo "  目标目录不可写（属主 admin，权限 700）—— 需要经 admin 通道复制，见 copy-out.sh"
-  echo "$FPK"
+  echo "  未指定额外输出目录（第 2 个参数），产物就在 $DIST/"
 fi
 say "完成：$FPK"

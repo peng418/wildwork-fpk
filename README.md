@@ -2,14 +2,16 @@
 
 ## 这是什么
 
-把上游 [rockswang/wild-work](https://github.com/rockswang/wild-work)（v2.4.1，多 IDE 账号池 → OpenAI 兼容 API）
+把上游 [rockswang/wild-work](https://github.com/rockswang/wild-work)（多 IDE 账号池 → OpenAI 兼容 API，本仓库按 v2.4.7 基线打包）
 封装成**飞牛 fnOS 原生 FPK 应用**。安装后是系统里的一个普通应用，**不依赖 Docker**。
+
+成品包在 [Releases](../../releases) 里（`wildwork-<版本>.fpk`）。
 
 | 项目 | 值 |
 |---|---|
-| 包名 | `wildwork-2.4.1.fpk` |
+| 包名 | `wildwork-2.4.7.fpk` |
 | 应用 ID | `wildwork` |
-| 版本 | 2.4.1（上游二进制 sha256 `37f976c4d48cecbc80c381cd3cdcd5d01296969d7b605869fbf2b17bf3f75c29`） |
+| 版本 | 2.4.7（载荷二进制 sha256 见下「从源码重建」） |
 | 服务端口 | **5013** |
 | 监听地址 | `0.0.0.0:5013` = **IPv4 + IPv6 双栈** |
 | 桌面入口 | 飞牛桌面窗口内**页内弹窗**（统一网关 `/app/wildwork`），**不跳转页面、不开新标签** |
@@ -18,7 +20,7 @@
 
 ## 安装
 
-1. 飞牛桌面 → **应用中心 → 手动安装 / 本地安装** → 选 `wildwork-2.4.1.fpk`
+1. 飞牛桌面 → **应用中心 → 手动安装 / 本地安装** → 选 `wildwork-2.4.7.fpk`
 2. 安装向导会说明用法，直接下一步到底
 3. 安装完成后桌面出现两个图标：
    - **Wild Work** —— 主入口，点开是桌面内弹窗（走统一网关）
@@ -95,7 +97,16 @@ curl "http://[2001:db8::1d3]:5013/v1/models" -H "Authorization: Bearer WildWorkA
 
 ```bash
 cd <本目录>            # 需要 tpl/ payload/ assets/ build-fpk.sh
-./build-fpk.sh 2.4.1 dist
+./build-fpk.sh 2.4.7          # 产物落在 dist/wildwork-2.4.7.fpk
+./build-fpk.sh 2.4.7 <目录>   # 额外复制一份到指定目录
+```
+
+载荷由源码仓库用 `-trimpath` 构建（绝对路径不会编进二进制）：
+
+```bash
+cd <wild-work 源码>
+CGO_ENABLED=1 go build -trimpath -ldflags "-s -w -X wild-work/internal/app.FpkVersion=2.4.7" \
+  -o <本目录>/payload/wild-work ./cmd/wild-work
 ```
 
 `build-fpk.sh` 会：组装目录 → 生成 64/256 图标 → 写 manifest → 查 symlink/权限/JSON → `fnpack build` → 落盘。
@@ -103,4 +114,4 @@ cd <本目录>            # 需要 tpl/ payload/ assets/ build-fpk.sh
 
 ---
 
-生成时间：2026-09-23
+生成时间：2026-09-25
